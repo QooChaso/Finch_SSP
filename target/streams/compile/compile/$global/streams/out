@@ -1,0 +1,12 @@
+[0m[[0m[31merror[0m] [0m[0m/Users/f_kurabayashi/IdeaProjects/FinchTest/src/main/scala/api.scala:8:29: An Endpoint you're trying to convert into a Finagle service is missing one or more encoders.[0m
+[0m[[0m[31merror[0m] [0m[0m[0m
+[0m[[0m[31merror[0m] [0m[0m  Make sure String is one of the following:[0m
+[0m[[0m[31merror[0m] [0m[0m[0m
+[0m[[0m[31merror[0m] [0m[0m  * A com.twitter.finagle.http.Response[0m
+[0m[[0m[31merror[0m] [0m[0m  * A value of a type with an io.finch.Encode instance (with the corresponding content-type)[0m
+[0m[[0m[31merror[0m] [0m[0m  * A coproduct made up of some combination of the above[0m
+[0m[[0m[31merror[0m] [0m[0m[0m
+[0m[[0m[31merror[0m] [0m[0m  See https://github.com/finagle/finch/blob/master/docs/src/main/tut/cookbook.md#fixing-the-toservice-compile-error[0m
+[0m[[0m[31merror[0m] [0m[0m    Http.serve(":8080", api.toService)[0m
+[0m[[0m[31merror[0m] [0m[0m                            ^[0m
+[0m[[0m[31merror[0m] [0m[0mone error found[0m
