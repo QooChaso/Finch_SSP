@@ -4,7 +4,7 @@
 		module="finchtest_2.12"
 		revision="0.1"
 		status="integration"
-		publication="20181001152107"
+		publication="20181025113838"
 	>
 		<description>
 		FinchTest
@@ -33,7 +33,8 @@
 		<dependency org="org.scala-lang" name="scala-compiler" rev="2.12.7" conf="scala-tool->default,optional(default)"/>
 		<dependency org="org.scala-lang" name="scala-library" rev="2.12.7" conf="scala-tool->default,optional(default);compile->default(compile)"/>
 		<dependency org="com.github.finagle" name="finch-core_2.12" rev="0.22.0" conf="compile->default(compile)"/>
-		<dependency org="com.github.finagle" name="finch-circe_2.12" rev="0.22.0" conf="compile->default(compile)"/>
+		<dependency org="com.github.finagle" name="finch-circe_2.12" rev="0.25.0" conf="compile->default(compile)"/>
+		<dependency org="io.circe" name="circe-parser_2.12" rev="0.9.0" conf="compile->default(compile)"/>
 		<dependency org="io.circe" name="circe-generic_2.12" rev="0.9.0" conf="compile->default(compile)"/>
 	</dependencies>
 </ivy-module>

@@ -4,15 +4,17 @@ import io.finch.circe._
 import io.finch.syntax._
 import io.circe.syntax._
 import io.circe.generic.auto._
+import io.circe.Json
+import io.circe.parser._
 import com.twitter.util.Await
 import com.twitter.util._
 import com.twitter.finagle.http.{Request, Response}
 import com.twitter.finagle.{Http, Service, http}
 import com.twitter.conversions.time._
-import Model.RequestToDsp
-import io.circe.Json
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.io.Source
+import Model.RequestToDsp
+import io.circe
 
 
 object Main extends App {
@@ -29,22 +31,24 @@ object Main extends App {
   //curl http://localhost:8081/index -X POST -H "Content-Type: application/json" -d '{"app_id": 9999}'
   val index: Endpoint[ResponseToSdk] =
     post("index" :: jsonBody[RequestFromSdk]) { request: RequestFromSdk =>
-      println("Received request from SDK")
+      //DSPへのリクエスト
       val requestDspParams: String = RequestToDsp(request.app_id).asJson.toString
-
-      //val aa: Future[Response] = dspRequest("localhost", "8082", requestDspParams)
-      val listOfFutures: Seq[Future[Response]] =
+      val listOfFutures: Seq[Future[String]] =
         for( i <- dsp ) yield {
-            dspRequest( i, "8082", requestDspParams )
-        }
+          dspRequest( i, "8082", requestDspParams ).map(_.getContentString.asJson.noSpaces)}
 
+      listOfFutures.foreach(x => x.map(y => println(y)))
 
-      //listOfFuturesの返り値のpromiseが意味不
-      //追記 レスポンス帰ってきた
-      listOfFutures.foreach(x => x.map(y => println(y.getContentString)))
-      //aa.map(x => println(x.status+", "+x.toString+", "+x.getContentString))
+/* これをうまいこと使うといいかも?
+      listOfFutures onComplete {
+        case Success(posts) => for (post <- posts) println(post)
+        case Failure(t) => println("エラーが発生した: " + t.getMessage)
+      }
+      */
 
-      //ResponseFromへの当てはめ
+      //ResponseFromへの当てはめ List[ResponseFromDsp]
+      //下のFutureを取り除く方法
+      val listOfResponseFromDsp = for(i <- listOfFutures)yield{decode[List[ResponseFromDsp]](i)}
       // 最高額探索
       //セカンドプライスを計算
       //落札DSPにWinNotice送信
@@ -68,8 +72,7 @@ object Main extends App {
     client(request)
   }
 
-  //DSPのアドレスを別ファイルから読み込み
-  /*
+  /* DSPのアドレスを別ファイルから読み込み
   var dspList = List()
   val dspSource = Source.fromFile("/Users/f_kurabayashi/IdeaProjects/FinchTest/src/main/scala/dsp.txt", "UTF-8")
   //val dspSource = Source.fromFile("dsp.txt")
