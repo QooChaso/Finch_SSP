@@ -2,68 +2,66 @@
 import io.finch._
 import io.finch.circe._
 import io.finch.syntax._
+import io.circe
 import io.circe.syntax._
 import io.circe.generic.auto._
-import io.circe.Json
 import io.circe.parser._
 import com.twitter.util.Await
 import com.twitter.util._
 import com.twitter.finagle.http.{Request, Response}
 import com.twitter.finagle.{Http, Service, http}
 import com.twitter.conversions.time._
-import scala.concurrent.ExecutionContext.Implicits.global
-import scala.io.Source
-import Model.RequestToDsp
-import io.circe
-
+import Model._
 
 object Main extends App {
 
-  //val dsp = Seq("127.0.0.1", "127.0.0.2", "127.0.0.3")
-  val dsp = Seq("localhost", "localhost", "localhost")
-
-  //case class引数名とcurlで送るjsonのkeyは一致させないとうまく動かない。
-  case class RequestFromSdk(app_id: Int)
-  case class ResponseToSdk(url: String)
-  case class ResponseFromDsp(request_id: String, url: String, price: Float)
-  case class WinNotice(request_id: String, price: Float)
+  val dsp = Seq("127.0.0.1", "127.0.0.1", "127.0.0.1")
 
   //curl http://localhost:8081/index -X POST -H "Content-Type: application/json" -d '{"app_id": 9999}'
   val index: Endpoint[ResponseToSdk] =
     post("index" :: jsonBody[RequestFromSdk]) { request: RequestFromSdk =>
-      //DSPへのリクエスト
+      println("Call index")
+
+      //DSPへのリクエスト(レスポンスをResponseFromDspへ変換)
       val requestDspParams: String = RequestToDsp(request.app_id).asJson.toString
-      val listOfFutures: Seq[Future[String]] =
+      val listOfFutures: Seq[Future[Either[circe.Error, ResponseFromDsp]]] =
         for( i <- dsp ) yield {
-          dspRequest( i, "8082", requestDspParams ).map(_.getContentString.asJson.noSpaces)}
+          dspRequest( i, "8082", requestDspParams ).map(_.getContentString).map(x => decode[ResponseFromDsp](x))}
 
-      listOfFutures.foreach(x => x.map(y => println(y)))
+      val test: Future[Seq[Either[circe.Error, ResponseFromDsp]]] = Future.collect(listOfFutures)
+      val test2: Future[Seq[ResponseFromDsp]] = for (i <- test.map(_.map(_ match {
+        case Right(i) => i}))) yield { i }
 
-/* これをうまいこと使うといいかも?
-      listOfFutures onComplete {
-        case Success(posts) => for (post <- posts) println(post)
-        case Failure(t) => println("エラーが発生した: " + t.getMessage)
+      val OkResponse: Future[ResponseToSdk] = test2.map { x => // seq[Res] =>
+        x.foreach(println)
+
+        //DSPが1台の時の処理
+        val test3 = x.indexWhere(_.price == x.map(y => y.price).max)
+        val test4: ResponseFromDsp = x(test3)
+
+        //セカンドプライスを計算
+        val secondPrice: Float = calculateSecondPrice(x)
+
+        //最高額DSPにWinNotice送信
+        val win = WinNotice(test4.request_id, secondPrice)
+        println(win)
+        //dspRequest(dsp(test3), "8082", win.toString)
+
+        //ログ残し
+        WriteLog.write(win)
+
+        ResponseToSdk(test4.url)
       }
-      */
 
-      //ResponseFromへの当てはめ List[ResponseFromDsp]
-      //下のFutureを取り除く方法
-      val listOfResponseFromDsp = for(i <- listOfFutures)yield{decode[List[ResponseFromDsp]](i)}
-      // 最高額探索
-      //セカンドプライスを計算
-      //落札DSPにWinNotice送信
-      //ログ残し
-
-      //SDKにレスポンス送信
-      //ここにコンパニオンオブジェクトのapplyを定義したコンパニオンクラスを渡すとうまく実行されない
-      Ok(ResponseToSdk("http://warosu"))
+      val aa = Await.result(OkResponse, 100 millis)
+      Ok(aa)
     }
 
   //DSPへHTTP通信
   def dspRequest(host: String, port: String, requestContent: String): Future[Response] ={
     val requestHost = s"$host:$port"
-    val client: Service[Request, Response] = Http.client.
-      withRequestTimeout(100.microsecond)
+    val client: Service[Request, Response] = Http.client
+      .withRequestTimeout(100.microsecond)
       .newService(requestHost)
 
     val request: Request = http.Request(http.Method.Post, "/").host(host)
@@ -72,20 +70,14 @@ object Main extends App {
     client(request)
   }
 
-  /* DSPのアドレスを別ファイルから読み込み
-  var dspList = List()
-  val dspSource = Source.fromFile("/Users/f_kurabayashi/IdeaProjects/FinchTest/src/main/scala/dsp.txt", "UTF-8")
-  //val dspSource = Source.fromFile("dsp.txt")
-  dspSource.getLines.foreach{x =>
-    dspList :+ x
-    println(x)
+  def calculateSecondPrice(seq: Seq[ResponseFromDsp]): Float ={
+    seq.filterNot(n =>
+      n.price == seq.map(y => y.price).max)
+      .map(_.price)
+      .max + 1
   }
-  dspSource.close
-  */
 
   val routes = index.toService
   val server = Http.server.serve(":8081", routes)
-
-  //接続ができなかった時にtimeoutを投げる
   Await.ready(server)
 }
