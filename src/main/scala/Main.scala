@@ -25,43 +25,43 @@ object Main extends App {
       //DSPへのリクエスト(レスポンスをResponseFromDspへ変換)
       val requestDspParams: String = RequestToDsp(request.app_id).asJson.toString
       val listOfFutures: Seq[Future[Either[circe.Error, ResponseFromDsp]]] =
-        for( i <- dsp ) yield {
-          dspRequest( i, "8082", requestDspParams ).map(_.getContentString).map(x => decode[ResponseFromDsp](x))}
+        for( i <- dsp )
+          yield {
+            dspRequest( i, "8082", requestDspParams )
+            .map(_.getContentString)
+            .map(x => decode[ResponseFromDsp](x))}
 
-      val test: Future[Seq[Either[circe.Error, ResponseFromDsp]]] = Future.collect(listOfFutures)
-      val test2: Future[Seq[ResponseFromDsp]] = for (i <- test.map(_.map(_ match {
-        case Right(i) => i}))) yield { i }
+      val futureOfList: Future[Seq[Either[circe.Error, ResponseFromDsp]]] = Future.collect(listOfFutures)
 
-      val OkResponse: Future[ResponseToSdk] = test2.map { x => // seq[Res] =>
-        x.foreach(println)
+      val OkResponse: Future[ResponseToSdk] = futureOfList.map{ x =>
+        val dspResList: Seq[ResponseFromDsp] =
+          for (i <- x.map(_ match { case Right(i) => i})) yield i
 
-        //DSPが1台の時の処理
-        val test3 = x.indexWhere(_.price == x.map(y => y.price).max)
-        val test4: ResponseFromDsp = x(test3)
+        val maxPriceIndex: Int = dspResList.indexWhere(_.price == dspResList.map(_.price).max)
 
-        //セカンドプライスを計算
-        val secondPrice: Float = calculateSecondPrice(x)
+        val winDsp: ResponseFromDsp = dspResList(maxPriceIndex)
+        val secondPrice: Float = calculateSecondPrice(dspResList)
 
         //最高額DSPにWinNotice送信
-        val win = WinNotice(test4.request_id, secondPrice)
+        val win = WinNotice(winDsp.request_id, secondPrice)
         println(win)
-        //dspRequest(dsp(test3), "8082", win.toString)
+        //dspRequest(dsp(maxPriceIndex), "8082", win.toString)
 
-        //ログ残し
+        //ログ書き込み
         WriteLog.write(win)
 
-        ResponseToSdk(test4.url)
+        ResponseToSdk(winDsp.url)
       }
 
-      val aa = Await.result(OkResponse, 100 millis)
-      Ok(aa)
+      val sdkResponse = Await.result(OkResponse, 100 millis)
+      Ok(sdkResponse)
     }
 
   //DSPへHTTP通信
   def dspRequest(host: String, port: String, requestContent: String): Future[Response] ={
     val requestHost = s"$host:$port"
     val client: Service[Request, Response] = Http.client
-      .withRequestTimeout(100.microsecond)
+      .withRequestTimeout(200.microsecond)
       .newService(requestHost)
 
     val request: Request = http.Request(http.Method.Post, "/").host(host)
