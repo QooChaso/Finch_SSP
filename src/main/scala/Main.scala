@@ -14,50 +14,45 @@ import com.twitter.conversions.time._
 import Model._
 
 object Main extends App {
-
-  //val dsp = Seq("10.100.100.20", "10.100.100.22", "10.100.100.24")
   //val dsp = Seq("127.0.0.1", "127.0.0.1", "127.0.0.1")
   val dsp = Seq("127.0.0.1")
 
   //curl http://localhost:8081/index -X POST -H "Content-Type: application/json" -d '{"app_id": 9999}'
-  implicit val index: Endpoint[ResponseToSdk] =
+  val index: Endpoint[ResponseToSdk] =
     post("index" :: jsonBody[RequestFromSdk]) { request: RequestFromSdk =>
 
       //DSPへのリクエスト(レスポンスをResponseFromDspへ変換)
       val requestDspParams: String = RequestToDsp(request.app_id).asJson.toString
       val listOfFutures: Seq[Future[Either[circe.Error, ResponseFromDsp]]] =
-        for( i <- dsp ) yield {
-            dspRequest( i, "8082", requestDspParams, "/req")
-              .map(_ match {
-                case Some(value) => decode[ResponseFromDsp](value.getContentString)
-                case None => Right(ResponseFromDsp("-1", "-1", -1))})}
+        dsp.map{x =>
+          dspRequest(x, "8082", requestDspParams, "/req")
+            .map(responseCheck)}
 
       val okResponse: Future[ResponseToSdk] =
         Future.collect(listOfFutures)
-          .map{ x =>
-            x.foreach(println)
-            val dspResList: Seq[ResponseFromDsp] =
-              for (i <- x.map(_ match { case Right(i) => i})) yield i
+          .map{x =>
+            val dspResList: Seq[ResponseFromDsp] = x.map(_.right.get)
+            println(dspResList)
 
-            val maxPriceIndex: Int = dspResList
-              .indexWhere(_.price == dspResList.map(_.price).max)
-
-            val winDsp: ResponseFromDsp = dspResList(maxPriceIndex)
-            val secondPrice: Float = calculateSecondPrice(dspResList)
+            val winDsp = searchWinDsp(dspResList)
+            val secondPrice: Float = calcSecondPrice(dspResList)
 
             //最高額DSPにWinNotice送信
             val win = WinNotice(winDsp.request_id, secondPrice)
             println(win)
-            //dspRequest(dsp(maxPriceIndex), "8082", win.toString, "/win")
+            dspRequest(dsp(searchWinIndex(dspResList)), "8082", win.toString, "/win")
 
             //ログ書き込み
-            //負荷テストの際にログが残らない現象
-            //WriteLog.write(win)
+            WriteLog.write(win)
             ResponseToSdk(winDsp.url)
           }
       val sdkResponse = Await.result(okResponse, 100.millis)
       Ok(sdkResponse)
     }
+
+  val routes = index.toService
+  val server = Http.server.serve(":8081", routes)
+  Await.ready(server)
 
   def dspRequest(host: String, port: String, requestContent: String, reqApi: String): Future[Option[Response]] ={
     val requestHost = s"$host:$port"
@@ -74,13 +69,29 @@ object Main extends App {
       .handle{case _ => None}
   }
 
-  def calculateSecondPrice(seq: Seq[ResponseFromDsp]): Float ={
-      seq.filterNot(_.price == seq.map(y => y.price).max)
-        .map(_.price)
-        .max + 1
+  def responseCheck(res: Option[Response]): Either[circe.Error, ResponseFromDsp] ={
+    res match {
+      case Some(value) => decode[ResponseFromDsp](value.getContentString)
+      case None => Right(ResponseFromDsp("-1", "-1", 0))
+    }
   }
 
-  implicit val routes = index.toService
-  val server = Http.server.serve(":8081", routes)
-  Await.ready(server)
+  def searchWinIndex(list: Seq[ResponseFromDsp]): Int ={
+    val winIndex: Int = list.indexWhere(_.price == list.map(_.price).max)
+    winIndex
+  }
+
+  def searchWinDsp(list: Seq[ResponseFromDsp]): ResponseFromDsp ={
+    val winIndex = searchWinIndex(list)
+    val winDsp: ResponseFromDsp = list(winIndex)
+    winDsp
+  }
+
+  def calcSecondPrice(seq: Seq[ResponseFromDsp]): Float ={
+    if(seq.length <= 1) seq.head.price + 1
+    else seq
+      .filterNot(_.price == seq.map(y => y.price).max)
+      .map(_.price)
+      .max + 1
+  }
 }
