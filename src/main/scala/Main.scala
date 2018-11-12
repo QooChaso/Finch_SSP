@@ -20,45 +20,42 @@ object Main extends App {
   //curl http://localhost:8081/index -X POST -H "Content-Type: application/json" -d '{"app_id": 9999}'
   val index: Endpoint[ResponseToSdk] =
     post("index" :: jsonBody[RequestFromSdk]) { request: RequestFromSdk =>
-
       //DSPへのリクエスト(レスポンスをResponseFromDspへ変換)
       val requestDspParams: String = RequestToDsp(request.app_id).asJson.toString
       val listOfFutures: Seq[Future[Either[circe.Error, ResponseFromDsp]]] =
-        dsp.map{x =>
+        dsp.map { x =>
           dspRequest(x, "8082", requestDspParams, "/req")
-            .map(responseCheck)}
+            .map(responseCheck)
+        }
 
       val okResponse: Future[ResponseToSdk] =
         Future.collect(listOfFutures)
-          .map{x =>
+          .map { x =>
             val dspResList: Seq[ResponseFromDsp] = x.map(_.right.get)
-            println(dspResList)
-
             val winDsp = searchWinDsp(dspResList)
             val secondPrice: Float = calcSecondPrice(dspResList)
 
-            //最高額DSPにWinNotice送信
             val win = WinNotice(winDsp.request_id, secondPrice)
-            println(win)
             dspRequest(dsp(searchWinIndex(dspResList)), "8082", win.toString, "/win")
-
-            //ログ書き込み
-            WriteLog.write(win)
+            //WriteLog.write(win)
+            println(win)
             ResponseToSdk(winDsp.url)
           }
       val sdkResponse = Await.result(okResponse, 100.millis)
       Ok(sdkResponse)
     }
 
-  val routes = index.toService
-  val server = Http.server.serve(":8081", routes)
-  Await.ready(server)
+    val routes = index.toService
+    val server = Http.server.serve(":8081", routes)
+    Await.ready(server)
 
+  //clientは使い回しができるのでいちいちserviceを生成する必要がない
+  //このclientは同期的に処理されるらしい
   def dspRequest(host: String, port: String, requestContent: String, reqApi: String): Future[Option[Response]] ={
     val requestHost = s"$host:$port"
     val client: Service[Request, Response] =
       Http.client
-        .withRequestTimeout(100.microsecond)
+        .withRequestTimeout(100.millis)
         .newService(requestHost)
 
     val request: Request = http.Request(http.Method.Post, reqApi).host(host)
