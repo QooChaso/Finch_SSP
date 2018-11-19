@@ -11,45 +11,51 @@ import com.twitter.util.Await
 import com.twitter.conversions.time._
 import com.twitter.finagle.{Http, Service, http}
 import com.twitter.finagle.http.{Request, Response}
-
 import Model._
 
 object Main extends App {
-  val dsp = Seq("127.0.0.1", "127.0.0.1")
+  val dsp = Seq("127.0.0.1")
+
+  //Connection Pooling
+  val servicePool: Seq[Service[Request, Response]] = createClient(dsp)
 
   //curl http://localhost:8081/index -X POST -H "Content-Type: application/json" -d '{"app_id": 9999}'
   val index: Endpoint[ResponseToSdk] =
     post("index" :: jsonBody[RequestFromSdk]) { request: RequestFromSdk =>
-      //DSPへのリクエスト(レスポンスをResponseFromDspへ変換)
+
       val requestDspParams: String = RequestToDsp(request.app_id).asJson.toString
       val listOfFutures: Seq[Future[Either[circe.Error, ResponseFromDsp]]] =
-        dsp.par.map { x =>
-          dspRequest(x, "8082", requestDspParams, "/req")
+        servicePool.par.map { x =>
+          dspRequest(x, requestDspParams, "/req")
             .map(responseCheck)}.seq
 
       Future.collect(listOfFutures)
         .map { x =>
           val dspResList: Seq[ResponseFromDsp] = x.map(_.right.get)
-          val winDsp = searchWinDsp(dspResList)
-          val secondPrice: Float = calcSecondPrice(dspResList)
+          val winIndex = searchWinIndex(dspResList)
+          val winDsp = dspResList(winIndex)
+          val secondPrice: Float = calcSecondPrice(dspResList, winIndex)
           val win = WinNotice(winDsp.request_id, secondPrice)
-          dspRequest(dsp(searchWinIndex(dspResList)), "8082", win.toString, "/win")
+          dspRequest(servicePool(winIndex), win.toString, "/win")
           //WriteLog.write(win)
           Ok(ResponseToSdk(winDsp.url))}
     }
     val server = Http.server.serve(":8081", index.toService)
     Await.ready(server)
 
-  //clientは使い回しができるのでいちいちserviceを生成する必要がない
-  //このclientは同期的に処理されるらしい
-  def dspRequest(host: String, port: String, requestContent: String, reqApi: String): Future[Option[Response]] ={
-    val requestHost = s"$host:$port"
-    val client: Service[Request, Response] =
-      Http.client
-        .withRequestTimeout(100.millis)
-        .newService(requestHost)
+  def createClient(dspSeq: Seq[String]): Seq[Service[Request, Response]] ={
+    val poolSeq: Seq[Service[Request, Response]] =
+      dsp.map{i =>
+        val client: Service[Request, Response] =
+          Http.client
+            .withRequestTimeout(100.millis)
+            .newService(s"$i:8082")
+        client}
+    poolSeq
+  }
 
-    val request: Request = http.Request(http.Method.Post, reqApi).host(host)
+  def dspRequest(client: Service[Request, Response], requestContent: String, reqApi: String): Future[Option[Response]] ={
+    val request: Request = http.Request(http.Method.Post, reqApi).host("8082")
     request.setContentTypeJson
     request.setContentString(requestContent)
     client(request)
@@ -69,17 +75,8 @@ object Main extends App {
     winIndex
   }
 
-  def searchWinDsp(list: Seq[ResponseFromDsp]): ResponseFromDsp ={
-    val winIndex = searchWinIndex(list)
-    val winDsp: ResponseFromDsp = list(winIndex)
-    winDsp
-  }
-
-  def calcSecondPrice(seq: Seq[ResponseFromDsp]): Float ={
+  def calcSecondPrice(seq: Seq[ResponseFromDsp], winIndex: Int): Float ={
     if(seq.length <= 1) seq.head.price + 1
-    else seq
-      .filterNot(_.price == seq.map(y => y.price).max)
-      .map(_.price)
-      .max + 1
+    else seq.drop(winIndex).map(_.price).max
   }
 }
