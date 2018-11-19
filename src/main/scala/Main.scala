@@ -4,18 +4,18 @@ import io.finch.circe._
 import io.finch.syntax._
 import io.circe
 import io.circe.syntax._
-import io.circe.generic.auto._
 import io.circe.parser._
-import com.twitter.util.Await
+import io.circe.generic.auto._
 import com.twitter.util._
-import com.twitter.finagle.http.{Request, Response}
-import com.twitter.finagle.{Http, Service, http}
+import com.twitter.util.Await
 import com.twitter.conversions.time._
+import com.twitter.finagle.{Http, Service, http}
+import com.twitter.finagle.http.{Request, Response}
+
 import Model._
 
 object Main extends App {
-  //val dsp = Seq("127.0.0.1", "127.0.0.1", "127.0.0.1")
-  val dsp = Seq("127.0.0.1")
+  val dsp = Seq("127.0.0.1", "127.0.0.1")
 
   //curl http://localhost:8081/index -X POST -H "Content-Type: application/json" -d '{"app_id": 9999}'
   val index: Endpoint[ResponseToSdk] =
@@ -23,30 +23,21 @@ object Main extends App {
       //DSPへのリクエスト(レスポンスをResponseFromDspへ変換)
       val requestDspParams: String = RequestToDsp(request.app_id).asJson.toString
       val listOfFutures: Seq[Future[Either[circe.Error, ResponseFromDsp]]] =
-        dsp.map { x =>
+        dsp.par.map { x =>
           dspRequest(x, "8082", requestDspParams, "/req")
-            .map(responseCheck)
-        }
+            .map(responseCheck)}.seq
 
-      val okResponse: Future[ResponseToSdk] =
-        Future.collect(listOfFutures)
-          .map { x =>
-            val dspResList: Seq[ResponseFromDsp] = x.map(_.right.get)
-            val winDsp = searchWinDsp(dspResList)
-            val secondPrice: Float = calcSecondPrice(dspResList)
-
-            val win = WinNotice(winDsp.request_id, secondPrice)
-            dspRequest(dsp(searchWinIndex(dspResList)), "8082", win.toString, "/win")
-            //WriteLog.write(win)
-            println(win)
-            ResponseToSdk(winDsp.url)
-          }
-      val sdkResponse = Await.result(okResponse, 100.millis)
-      Ok(sdkResponse)
+      Future.collect(listOfFutures)
+        .map { x =>
+          val dspResList: Seq[ResponseFromDsp] = x.map(_.right.get)
+          val winDsp = searchWinDsp(dspResList)
+          val secondPrice: Float = calcSecondPrice(dspResList)
+          val win = WinNotice(winDsp.request_id, secondPrice)
+          dspRequest(dsp(searchWinIndex(dspResList)), "8082", win.toString, "/win")
+          //WriteLog.write(win)
+          Ok(ResponseToSdk(winDsp.url))}
     }
-
-    val routes = index.toService
-    val server = Http.server.serve(":8081", routes)
+    val server = Http.server.serve(":8081", index.toService)
     Await.ready(server)
 
   //clientは使い回しができるのでいちいちserviceを生成する必要がない
